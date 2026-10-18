@@ -141,6 +141,8 @@ export async function main() {
     .update(process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1/")
     .update(await readFile(fileURLToPath(import.meta.url)))
     .update(await readFile(new URL("./routes.mjs", import.meta.url)))
+    .update(await readFile(new URL("./trpc.mjs", import.meta.url)))
+    .update(await readFile(new URL("../package.json", import.meta.url)))
     .update(await readFile(new URL("./ai.mjs", import.meta.url)))
     .digest("hex").slice(0, 16);
   const prs = values.pr ? [gh(`repos/${config.repository}/pulls/${values.pr}`)]

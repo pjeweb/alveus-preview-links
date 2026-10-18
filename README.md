@@ -12,8 +12,10 @@ It reads GitHub's Vercel deployment statuses, waits for a successful preview of
 the PR's **current head commit**, traces changed UI files through static runtime
 imports to Next.js pages, and selects at most six links. It follows relative and
 `@/` imports, barrel exports, dynamic imports with literal paths, and assets.
-Type-only imports and server/env plumbing are excluded. A trace stops at pages
-instead of following their exports back into navigation and the application shell.
+Type-only imports and shared server/env plumbing are excluded. A trace stops at
+pages instead of following their exports back into navigation and the application shell.
+Changed server functions are traced through registered tRPC procedures to the
+screens that call them, including calls made by imported UI components.
 
 Directly changed pages take priority; otherwise the nearest UI consumers are
 used. The limit is not a quota: a one-page change gets one page, not five extra
@@ -60,10 +62,10 @@ pages; the server-only encryption helpers PR #2452 produces no comment.
 
 ## Try locally
 
-Requirements: Node.js 22+, Git, and the GitHub CLI (`gh auth login`). No package
-dependencies or installation are needed.
+Requirements: Node.js 22+, pnpm, Git, and the GitHub CLI (`gh auth login`).
 
 ```sh
+pnpm install --frozen-lockfile --ignore-scripts
 pnpm test
 node src/bot.mjs --pr 2463 --no-ai
 ```
@@ -177,8 +179,20 @@ Use `--force` to retry AI after a fallback. No live paid model calls are needed
 for the test suite.
 
 This is best-effort static impact analysis, not an exhaustive test plan.
+For server changes, the bot uses TypeScript's parser and local symbols to follow
+changed functions and constants into statically registered tRPC procedures.
+Diff lines identify the changed symbols; if GitHub omits a file's patch, all its
+runtime symbols are considered. The router's actual registration keys and
+explicit client query/mutation/subscription hooks connect procedures to pages.
+Direct procedure changes and immediate server helpers take priority over deeper
+helper chains, independently of the number of UI component imports. For example,
+PR #2478 links `/admin/twitch` and `/admin/users` without adding unrelated screens
+that share the tRPC client. The parser reads only the downloaded source; PR
+configuration, plugins, scripts, and builds are never loaded or executed.
+
 Runtime-generated imports, external packages, database-driven slugs, redirects,
-and server integrations can affect additional pages. The current route mapper
+dynamic router composition, destructured client calls, and server integrations
+can affect additional pages. The current route mapper
 targets this site's Pages Router. Dynamic routes need source-verified or
 configured real IDs; the bot does not invent them or query production databases. It checks source
 evidence, not whether each page's backend or live data is healthy.
