@@ -1,5 +1,7 @@
 # Alveus preview links
 
+> this is just vibe coded. do not use ;)
+
 A standalone personal GitHub automation that adds useful Vercel preview links to
 all open PRs in `alveusgg/alveusgg`. No changes to the Alveus repository, Vercel
 account, database, or deployment process are needed.
