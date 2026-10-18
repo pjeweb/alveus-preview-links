@@ -1,0 +1,10 @@
+{
+  "repository": "alveusgg/alveusgg",
+  "author": "",
+  "sourceRoot": "apps/website/src/",
+  "pagesRoot": "apps/website/src/pages/",
+  "deploymentCreator": "vercel[bot]",
+  "deploymentHostPrefix": "alveusgg-website-",
+  "maxLinks": 6,
+  "dynamicExamples": {}
+}

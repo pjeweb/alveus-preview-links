@@ -1,0 +1,56 @@
+name: Preview links
+
+on:
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Specific PR number (empty scans open PRs)'
+        type: string
+      write:
+        description: 'Post or update comments'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-links
+  cancel-in-progress: false
+
+jobs:
+  comment:
+    if: github.event_name == 'workflow_dispatch' || vars.PREVIEW_COMMENTS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - run: node --test
+      - name: Find preview links
+        env:
+          # Public reads also work with the workflow token. Cross-repo comment
+          # writes need your own personal access token.
+          GH_TOKEN: ${{ secrets.PREVIEW_GITHUB_TOKEN || github.token }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+          PR_NUMBER: ${{ inputs.pr }}
+          HAS_COMMENT_TOKEN: ${{ secrets.PREVIEW_GITHUB_TOKEN != '' }}
+          WRITE: ${{ github.event_name == 'schedule' && vars.PREVIEW_COMMENTS_ENABLED == 'true' || inputs.write == true }}
+        shell: bash
+        run: |
+          args=()
+          if [[ "$WRITE" == 'true' && "$HAS_COMMENT_TOKEN" != 'true' ]]; then
+            echo 'Set PREVIEW_GITHUB_TOKEN before enabling comments.' >&2
+            exit 1
+          fi
+          if [[ -n "$PR_NUMBER" ]]; then args+=(--pr "$PR_NUMBER"); fi
+          if [[ "$WRITE" == 'true' ]]; then args+=(--write); fi
+          node src/bot.mjs "${args[@]}"

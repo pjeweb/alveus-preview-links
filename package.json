@@ -1,0 +1,11 @@
+{
+  "name": "alveus-preview-links",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "packageManager": "pnpm@8.15.7",
+  "scripts": {
+    "start": "node src/bot.mjs",
+    "test": "node --test"
+  }
+}
