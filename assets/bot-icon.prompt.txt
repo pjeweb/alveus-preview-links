@@ -1,0 +1,10 @@
+Use case: logo-brand.
+Asset type: a single square GitHub App avatar for "Alveus Preview Links", a small automation that posts website preview links on wildlife sanctuary pull requests.
+Primary request: create a polished, charming, original mascot icon combining a red-tailed hawk with a friendly little robot. It should feel at home beside wildlife-conservation branding and clearly read as a bot.
+Subject: just the head, front-facing. A warm cream robot faceplate with a small dark hooked hawk beak; broad swept-back feather-shaped brow and cheek plates; a few restrained terracotta accents suggesting red-tail feathers. Two large softly rounded screen eyes, linked by a short bridge as a very subtle URL-link motif. Bright warm amber eyes, alert and helpful expression, slightly mischievous without being angry. A small visible mechanical joint at each side makes the robotic identity clear.
+Style: beautifully balanced, flat illustrative mascot logo, precise clean contours, bold simple shapes, strong negative space, very restrained two-tone shading. Professional but friendly personal open-source side-project personality. No photographic texture or 3D rendering.
+Palette: deep forest-olive background, warm ivory and earthy brown face, restrained burnt-orange details, amber eye lights. Excellent contrast in both light and dark GitHub interfaces.
+Composition: 1:1 square image, head centered and occupying about 75 percent of the canvas, all important features safely inside a circular avatar crop. Solid deep olive background filling the entire square, no border. Design should remain recognizable at 32 by 32 pixels.
+Constraints: exactly one finished icon, no concept sheet, no mockup, no extra symbols around it, no body, no scene, no lettering, no initials, no typography, no watermark. Distinct from the official Alveus logo; use the conservation bird connection rather than reproducing that logo.
+
+Generation method: built-in image_gen tool.

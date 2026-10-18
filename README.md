@@ -2,6 +2,8 @@
 
 > this is just vibe coded. do not use ;)
 
+<img src="assets/bot-icon-512.png" width="128" height="128" alt="Alveus Preview Links robot bird mascot" />
+
 A standalone personal GitHub automation that adds useful Vercel preview links to
 all open PRs in `alveusgg/alveusgg`. No changes to the Alveus repository, Vercel
 account, database, or deployment process are needed.
@@ -162,6 +164,10 @@ the bot does not invent them or query production databases. It checks source
 evidence, not whether each page's backend or live data is healthy.
 
 ## Sources
+
+The bot avatar was generated with the built-in image generation tool. The
+[512px avatar](assets/bot-icon-512.png), [original image](assets/bot-icon.png),
+and [generation prompt](assets/bot-icon.prompt.txt) are included for reuse.
 
 - [GitHub deployment statuses](https://docs.github.com/en/rest/deployments/statuses)
   provide deployment state and environment URL.
