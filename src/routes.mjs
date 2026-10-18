@@ -5,9 +5,10 @@ const extensions = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".css", ".json"];
 export function pageRoute(file, pagesRoot) {
   if (!file.startsWith(pagesRoot) || !/\.[jt]sx?$/.test(file)) return null;
   const relative = file.slice(pagesRoot.length).replace(/\.[jt]sx?$/, "");
-  if (/^(?:api|auth|oauth)(?:\/|$)/.test(relative)) return null;
+  const route = relative.replace(/(?:^|\/)index$/, "");
+  if (/^(?:api|auth|oauth)(?:\/|$)/.test(route) && route !== "auth/signin") return null;
   if (/(?:^|\/)_/.test(relative) || /^(?:404|500|unauthorized)$/.test(relative)) return null;
-  return `/${relative.replace(/(?:^|\/)index$/, "")}`;
+  return `/${route}`;
 }
 
 // Deliberately static: no imports or other code from a PR are executed.
@@ -28,6 +29,8 @@ export function imports(source) {
 
 function clientSource(file, config) {
   if (!file.startsWith(config.sourceRoot)) return false;
+  // The sign-in screen is a navigable page, unlike authentication actions.
+  if (pageRoute(file, config.pagesRoot) === "/auth/signin") return true;
   // Server/env/type plumbing connects most of the site without demonstrating
   // that a particular screen changed. Do not use it as an impact edge or seed.
   return !/^(?:server|env|types|app\/api|pages\/(?:api|auth|oauth))(?:\/|\.)/.test(file.slice(config.sourceRoot.length));

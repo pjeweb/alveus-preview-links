@@ -19,8 +19,10 @@ Directly changed pages take priority; otherwise the nearest UI consumers are
 used. The limit is not a quota: a one-page change gets one page, not five extra
 shared-dependency guesses. Broad changes are sampled across site areas. A purely
 global application change gets at most three representative pages. Deleted
-pages, API routes, authentication endpoints, and unresolved dynamic URLs are
-omitted. Backend-only changes without supported page links get no comment.
+pages, API routes, authentication action endpoints, and unresolved dynamic URLs
+are omitted. The `/auth/signin` screen is included for direct page changes and
+changes to its UI dependencies. Backend-only changes without supported page
+links get no comment.
 
 Comments are visibly headed **🤖 Automated preview links** and attributed to this
 automation. With a personal access token, GitHub still displays the token owner's

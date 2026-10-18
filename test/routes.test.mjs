@@ -27,8 +27,34 @@ const changes = [{ filename: root + "data/stream-themes.js", patch: '+ const the
 test("maps only navigable Pages Router files to routes", () => {
   assert.equal(pageRoute(config.pagesRoot + "index.tsx", config.pagesRoot), "/");
   assert.equal(pageRoute(config.pagesRoot + "about/index.tsx", config.pagesRoot), "/about");
-  for (const file of ["api/cron.ts", "_app.tsx", "404.tsx", "auth/signout.tsx", "oauth/authorize.tsx"]) {
+  assert.equal(pageRoute(config.pagesRoot + "auth/signin.tsx", config.pagesRoot), "/auth/signin");
+  assert.equal(pageRoute(config.pagesRoot + "auth/signin/index.tsx", config.pagesRoot), "/auth/signin");
+  for (const file of ["api/cron.ts", "_app.tsx", "404.tsx", "auth/signout.tsx", "auth/callback.tsx",
+    "auth/signin/callback.tsx", "oauth/authorize.tsx"]) {
     assert.equal(pageRoute(config.pagesRoot + file, config.pagesRoot), null);
+  }
+});
+
+test("sign-in changes produce preview links without including authentication actions", () => {
+  const form = root + "components/SignInForm.tsx";
+  const signin = config.pagesRoot + "auth/signin.tsx";
+  const actions = ["auth/signout.tsx", "auth/callback.tsx", "oauth/authorize.tsx", "api/auth/[...nextauth].ts"];
+  const graph = new Map([
+    [form, ""],
+    [signin, `import Form from "@/components/SignInForm"; import "@/server/auth";`],
+    [root + "server/auth.ts", ""],
+    ...actions.map((file) => [config.pagesRoot + file, `import Form from "@/components/SignInForm";`]),
+    [config.pagesRoot + "about.tsx", ""],
+  ]);
+  for (const filename of [signin, form]) {
+    const diff = [{ filename }];
+    const candidates = affectedRoutes(graph, diff, config);
+    assert.deepEqual(candidates.map((candidate) => candidate.route), ["/auth/signin"]);
+    const links = selectLinks(candidates, graph, diff, config);
+    assert.deepEqual(links.map((link) => linkUrl(origin, link)), [`${origin}/auth/signin`]);
+  }
+  for (const filename of [root + "server/auth.ts", ...actions.map((file) => config.pagesRoot + file)]) {
+    assert.deepEqual(affectedRoutes(graph, [{ filename }], config), []);
   }
 });
 
