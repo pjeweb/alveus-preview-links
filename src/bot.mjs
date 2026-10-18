@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { affectedRoutes, deploymentOrigin, linkUrl, overlayLinks, renderComment, selectLinks } from "./routes.mjs";
+import { affectedRoutes, deploymentOrigin, linkUrl, overlayLinks, previewCandidates, renderComment, selectLinks } from "./routes.mjs";
 import { suggestLinks } from "./ai.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -90,6 +90,21 @@ async function latestDeployment(config, sha) {
   return null;
 }
 
+async function stillCurrent(config, pr, deployment) {
+  const current = gh(`repos/${config.repository}/pulls/${pr.number}`);
+  if (current.state !== "open" || current.head.sha !== pr.head.sha) return false;
+  return (await latestDeployment(config, current.head.sha))?.id === deployment.id;
+}
+
+async function removeUnneededComment(config, pr, deployment, existing) {
+  if (!existing) return;
+  if (!await stillCurrent(config, pr, deployment)) {
+    console.error(`#${pr.number}: changed during analysis; retry cleanup on next run`); return;
+  }
+  gh(`repos/${config.repository}/issues/comments/${existing.id}`, { method: "DELETE" });
+  console.error(`#${pr.number}: removed preview comment without supported page links`);
+}
+
 function validateConfig(config) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(config.repository)) throw new Error("Invalid repository");
   if (!Number.isInteger(config.maxLinks) || config.maxLinks < 1 || config.maxLinks > 20) throw new Error("maxLinks must be 1–20");
@@ -147,6 +162,7 @@ export async function main() {
       const changes = gh(`repos/${config.repository}/pulls/${pr.number}/files?per_page=100`, { paginate: true });
       if (!changes.some((change) => [change.filename, change.previous_filename]
         .some((file) => file?.startsWith(config.sourceRoot)))) {
+        if (values.write) await removeUnneededComment(config, pr, deployment, existing);
         console.error(`#${pr.number}: no website source changes to trace`); continue;
       }
       let directory;
@@ -160,7 +176,7 @@ export async function main() {
         directory = checkout.directory;
       }
       const sources = await readSources(directory, config.sourceRoot);
-      const candidates = affectedRoutes(sources, changes, config);
+      const candidates = previewCandidates(affectedRoutes(sources, changes, config), config);
       let links = selectLinks(candidates, sources, changes, config);
       let ai = false;
       if (candidates.length && !values["no-ai"]) {
@@ -177,14 +193,15 @@ export async function main() {
           }
         } catch (error) { console.error(`#${pr.number}: ${error.message}; using static suggestions`); }
       }
-      if (!links.length) { console.error(`#${pr.number}: no concrete affected page links found`); continue; }
+      if (!links.length) {
+        if (values.write) await removeUnneededComment(config, pr, deployment, existing);
+        console.error(`#${pr.number}: no concrete affected page links found`); continue;
+      }
       const body = renderComment({ marker: `${marker}\n${state}`, sha: pr.head.sha, origin: deployment.origin,
-        links, candidates, ai, truncated: changes.length >= 3000 || changes.length < pr.changed_files });
+        links, candidates, ai, title: pr.title, truncated: changes.length >= 3000 || changes.length < pr.changed_files });
       if (!values.write) { console.log(`# PR ${pr.number} — dry run\n\n${body}`); continue; }
       // Avoid posting links for a superseded head or deployment after slow analysis.
-      const current = gh(`repos/${config.repository}/pulls/${pr.number}`);
-      const latest = await latestDeployment(config, current.head.sha);
-      if (current.state !== "open" || current.head.sha !== pr.head.sha || latest?.id !== deployment.id) {
+      if (!await stillCurrent(config, pr, deployment)) {
         console.error(`#${pr.number}: changed during analysis; retry on next run`); continue;
       }
       const result = existing ? gh(`repos/${config.repository}/issues/comments/${existing.id}`, { method: "PATCH", body: { body } })

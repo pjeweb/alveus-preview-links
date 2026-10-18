@@ -54,7 +54,7 @@ test("CLI posting, deduplication, stale heads, and safe migration to an app iden
         } else if (endpoint.includes('/deployments?')) result = [{id:state.deployment, creator:{login:'vercel[bot]'}, production_environment:false, environment:'Preview'}];
         else if (endpoint.includes('/statuses?')) result = [{state:'success', environment_url:'https://alveusgg-website-example-alveus.vercel.app'}];
         else if (endpoint.includes('/comments?')) result = state.comments;
-        else if (endpoint.endsWith('/files?per_page=100')) result = [{filename:'apps/website/src/pages/about.tsx', patch:'+ changed'}];
+        else if (endpoint.endsWith('/files?per_page=100')) result = state.changes || [{filename:'apps/website/src/pages/about.tsx', patch:'+ changed'}];
         else throw new Error('Unexpected mock endpoint: ' + endpoint);
       }
       fs.writeFileSync(process.env.GH_FIXTURE, JSON.stringify(state));
@@ -114,5 +114,22 @@ test("CLI posting, deduplication, stale heads, and safe migration to an app iden
     assert.equal(state.writes.length, 5);
     assert.equal(state.writes[4].method, "DELETE");
     assert.deepEqual(state.comments.map(comment => comment.id).sort((a, b) => a - b), [43, 99, 100]);
+
+    // A corrected analysis with no supported pages removes the app's obsolete
+    // automation comment, preserving ordinary discussion and other authors.
+    state.comments.push({ id: 102, user: { login: state.appLogin }, body: "Ordinary app discussion: keep this" });
+    state.changes = [{ filename: "apps/website/src/server/utils/encryption.ts" }];
+    state.stale = true; state.headReads = 0;
+    await writeFile(statePath, JSON.stringify(state));
+    run(["--write", "--force"], appEnv);
+    assert.equal((await read()).writes.length, 5, "A superseded head must not delete a comment");
+    state = await read(); state.stale = false; state.headReads = 0;
+    await writeFile(statePath, JSON.stringify(state));
+    run(["--write", "--force"], appEnv);
+    state = await read();
+    assert.equal(state.writes.length, 6);
+    assert.equal(state.writes[5].method, "DELETE");
+    assert.equal(state.writes[5].endpoint, `${prefix}/issues/comments/43`);
+    assert.deepEqual(state.comments.map(comment => comment.id).sort((a, b) => a - b), [99, 100, 102]);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

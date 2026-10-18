@@ -9,17 +9,25 @@ all open PRs in `alveusgg/alveusgg`. No changes to the Alveus repository, Vercel
 account, database, or deployment process are needed.
 
 It reads GitHub's Vercel deployment statuses, waits for a successful preview of
-the PR's **current head commit**, traces changed files through static imports to
-Next.js pages, and selects at most six links. It follows relative and `@/`
-imports, barrel exports, dynamic imports with literal paths, and imported assets.
-Shared app changes produce a sample from different site areas. Deleted pages,
-API routes, authentication endpoints, and unresolved dynamic URLs are omitted.
+the PR's **current head commit**, traces changed UI files through static runtime
+imports to Next.js pages, and selects at most six links. It follows relative and
+`@/` imports, barrel exports, dynamic imports with literal paths, and assets.
+Type-only imports and server/env plumbing are excluded. A trace stops at pages
+instead of following their exports back into navigation and the application shell.
+
+Directly changed pages take priority; otherwise the nearest UI consumers are
+used. The limit is not a quota: a one-page change gets one page, not five extra
+shared-dependency guesses. Broad changes are sampled across site areas. A purely
+global application change gets at most three representative pages. Deleted
+pages, API routes, authentication endpoints, and unresolved dynamic URLs are
+omitted. Backend-only changes without supported page links get no comment.
 
 Comments are visibly headed **🤖 Automated preview links** and attributed to this
 automation. With a personal access token, GitHub still displays the token owner's
 username; a separate bot identity requires a GitHub App or a dedicated account.
 
-One marked comment per PR is updated on later deployments. An unchanged
+One marked comment per PR is updated on later deployments. If a new analysis no
+longer supports any links, the bot removes its obsolete marked comment. An unchanged
 deployment is skipped before downloading source or calling an AI model. The
 comment records the deployment, head SHA, and bot/config fingerprint; changing
 the bot or model also refreshes suggestions. Only comments belonging to the
@@ -35,10 +43,18 @@ The bot discovers the actual successful deployment URL, then produces:
 - `/stream/overlay?layout=6cam&theme=auto` — check scheduled selection.
 - `/stream/overlay?layout=4cam&theme=wolf-week` — check the existing fallback.
 
-Other representative affected pages fill the remaining slots. These query
-variants come from a small Alveus adapter that checks the PR's overlay layouts,
-theme schedule, and diff. It does not assume every PR supports Wolf Week.
+These query variants come from a small Alveus adapter that checks the PR's
+overlay layouts, theme schedule, and diff. It runs only for changes to the actual
+overlay or its theme/artwork files, not unrelated server files named `stream`.
+It does not assume every PR supports Wolf Week or pad the three links with
+unrelated pages.
 Overlay previews are best viewed at 1920×1080.
+
+For pixel rename PRs such as #2462 and #2463, the bot links to
+`/institute/pixels/one/rename` and `/institute/pixels/two/rename`. The IDs are read
+from that PR head's mural catalogue, after checking that the page uses the
+catalogue's `getStaticPaths`. The presets UI PR #2445 links only its four changed
+pages; the server-only encryption helpers PR #2452 produces no comment.
 
 ## Try locally
 
@@ -47,7 +63,7 @@ dependencies or installation are needed.
 
 ```sh
 pnpm test
-node src/bot.mjs --pr 2468 --no-ai
+node src/bot.mjs --pr 2463 --no-ai
 ```
 
 The default is always a **dry run**. Scan all open PRs by omitting `--pr`.
@@ -78,7 +94,7 @@ bot's repository; configuration from PR branches is never loaded.
 3. Save that token as the bot repository's Actions secret
    `PREVIEW_GITHUB_TOKEN`. A personal repo's built-in `GITHUB_TOKEN` can read the
    public Alveus data but cannot write comments in a different repository.
-4. Run **Preview links → Run workflow**, enter `2468`, and leave `write` false
+4. Run **Preview links → Run workflow**, enter an open PR such as `2463`, and leave `write` false
    to inspect the generated comment in the log. Then run with `write` true to
    post that example.
 5. Set the bot repository's Actions variable `PREVIEW_COMMENTS_ENABLED=true` to
@@ -143,24 +159,26 @@ cost. To enable AI ranking and evidence-based query suggestions, add Actions
 secret `OPENAI_API_KEY` and variable `OPENAI_MODEL` for a model available to your
 API account that supports Responses API structured output. An optional
 `OPENAI_BASE_URL` variable can select a compatible provider implementing that
-API. Local runs can use `node --env-file=.env src/bot.mjs --pr 2468` after copying
+API. Local runs can use `node --env-file=.env src/bot.mjs --pr 2463` after copying
 `.env.example` to `.env` and filling those values.
 
 AI is called only when generating a new comment version. Input is capped at 40
 diffs, 100 route names, and six page-source excerpts. Output is capped at 2,500
 tokens. No tools or execution are provided to the model. It may choose only
-known affected routes and configured dynamic examples. Query keys must appear
+selected concrete paths, including source-verified mural IDs and configured
+dynamic examples. Query keys must appear
 in that page's `query.*` access, and values must appear as literals in the page
 or its imported source. Known overlay variants are retained. API errors,
 refusals, incomplete output, or invalid suggestions fall back to static links.
+A valid empty result suppresses the comment instead of filling it with guesses.
 Use `--force` to retry AI after a fallback. No live paid model calls are needed
 for the test suite.
 
 This is best-effort static impact analysis, not an exhaustive test plan.
 Runtime-generated imports, external packages, database-driven slugs, redirects,
 and server integrations can affect additional pages. The current route mapper
-targets this site's Pages Router. Dynamic routes need configured real IDs;
-the bot does not invent them or query production databases. It checks source
+targets this site's Pages Router. Dynamic routes need source-verified or
+configured real IDs; the bot does not invent them or query production databases. It checks source
 evidence, not whether each page's backend or live data is healthy.
 
 ## Sources

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { affectedRoutes, deploymentOrigin, imports, linkUrl, pageRoute, renderComment,
+import { affectedRoutes, concretePaths, deploymentOrigin, imports, linkUrl, pageRoute, previewCandidates, renderComment,
   selectLinks, validateAiLinks } from "../src/routes.mjs";
 import { findOwnedComment } from "../src/bot.mjs";
 import { suggestLinks } from "../src/ai.mjs";
@@ -68,8 +68,101 @@ test("caps broad changes and chooses more than one site area", () => {
   many.set(config.pagesRoot + "_app.tsx", "");
   const candidates = affectedRoutes(many, [{ filename: config.pagesRoot + "_app.tsx" }], config);
   const links = selectLinks(candidates, many, [], config);
-  assert.equal(links.length, 6);
-  assert.equal(new Set(links.map((link) => link.path)).size, 6);
+  assert.equal(links.length, 3);
+  assert.equal(new Set(links.map((link) => link.path)).size, 3);
+  const pages = ["about/a", "about/b", "about/c", "about/d", "ambassadors", "animal-quest", "contact", "donate"];
+  const direct = new Map(pages.map((page) => [config.pagesRoot + `${page}.tsx`, ""]));
+  const diff = [...direct.keys()].map((filename) => ({ filename }));
+  const sample = selectLinks(affectedRoutes(direct, diff, config), direct, diff, config);
+  assert.equal(sample.length, 6);
+  assert.equal(new Set(sample.map((link) => link.path.split("/")[1])).size, 5);
+});
+
+test("ignores type-only edges and keeps page exports from spreading into navigation", () => {
+  assert.deepEqual(imports(`import type { A } from "@/server/router";
+    export type { B } from "./types";
+    import { type C, type D } from "./only-types";
+    export { type E } from "./more-types";
+    import { type F, realValue } from "./runtime";
+    export { realValue } from "./barrel";`), ["./runtime", "./barrel"]);
+  const graph = new Map([
+    [root + "components/RenameStep.tsx", ""],
+    [root + "pages/rename.tsx", `import Step from "@/components/RenameStep";`],
+    [root + "data/navigation.ts", `import type { Props } from "@/pages/rename";
+      export { getStaticProps } from "@/pages/rename";`],
+    [root + "pages/_app.tsx", `import "@/data/navigation";`],
+    [root + "pages/about.tsx", ""],
+  ]);
+  assert.deepEqual(affectedRoutes(graph, [{ filename: root + "components/RenameStep.tsx" }], config)
+    .map((candidate) => candidate.route), ["/rename"]);
+});
+
+test("backend/env changes do not imply that every tRPC consumer needs a preview", () => {
+  const graph = new Map([
+    [root + "server/router.ts", `import "@/env/index.js";`],
+    [root + "env/index.js", ""],
+    [root + "utils/trpc.ts", `import { router } from "@/server/router";`],
+    [root + "pages/_app.tsx", `import "@/utils/trpc";`],
+    [root + "pages/about.tsx", `import "@/utils/trpc";`],
+  ]);
+  assert.deepEqual(affectedRoutes(graph, [
+    { filename: root + "server/router.ts" }, { filename: root + "env/index.js" },
+  ], config), []);
+});
+
+test("presets UI links only its four changed pages, without an unrelated overlay", () => {
+  const pages = ["about/tech/index", "about/tech/commands", "about/tech/presets", "admin/presets"];
+  const graph = new Map(sources);
+  for (const page of pages) graph.set(root + `pages/${page}.tsx`, "");
+  graph.set(root + "pages/_app.tsx", `import "@/server/trpc/router/stream";`);
+  graph.set(root + "server/trpc/router/stream.ts", "");
+  const diff = pages.map((page) => ({ filename: root + `pages/${page}.tsx` }))
+    .concat({ filename: root + "server/trpc/router/stream.ts", patch: "+ preset endpoint" });
+  const links = selectLinks(affectedRoutes(graph, diff, config), graph, diff, config);
+  assert.deepEqual(links.map((link) => link.path), ["/about/tech", "/about/tech/commands", "/about/tech/presets", "/admin/presets"]);
+  const one = diff.slice(1, 2);
+  assert.deepEqual(selectLinks(affectedRoutes(graph, one, config), graph, one, config).map((link) => link.path), ["/about/tech/commands"]);
+});
+
+test("pixel rename PRs resolve both real mural IDs from their static-path catalogue", () => {
+  const index = root + "pages/institute/pixels/[mural]/index.tsx";
+  const rename = root + "pages/institute/pixels/[mural]/rename.tsx";
+  const graph = new Map([
+    [root + "data/murals.ts", `const murals = {
+      one: { name: "Braces { in text }", grid: { rows: 50 } },
+      two: { type: "live" },
+    }; export default murals;`],
+    [index, `import murals, { type MuralId, isMuralId } from "@/data/murals";
+      export const getStaticPaths = () => ({ paths: typeSafeObjectKeys(murals).map((key) => ({
+        params: { mural: camelToKebab(key) },
+      })) });`],
+    [rename, `import type { Props } from "./index";
+      export { getStaticPaths, getStaticProps } from "./index";`],
+    [root + "pages/about.tsx", ""],
+  ]);
+  const diff = [{ filename: rename }];
+  const candidates = affectedRoutes(graph, diff, config);
+  const links = selectLinks(candidates, graph, diff, config);
+  assert.deepEqual(links.map((link) => link.path), ["/institute/pixels/one/rename", "/institute/pixels/two/rename"]);
+  const aiLink = { ...links[1] };
+  assert.equal(validateAiLinks([aiLink], candidates, graph, config, origin)[0].path, aiLink.path);
+  assert.throws(() => validateAiLinks([{ ...aiLink, path: "/institute/pixels/invented/rename" }], candidates, graph, config, origin));
+  graph.set(rename, "export default function Page() {}");
+  assert.deepEqual(concretePaths(candidates[0], graph, config), [], "Must verify the page actually uses these static paths");
+});
+
+test("local data changes select their nearest pages rather than the shared navigation shell", () => {
+  const graph = new Map([
+    [root + "data/catalogue.ts", ""],
+    [root + "pages/feature.tsx", `import "@/data/catalogue";`],
+    [root + "components/Nav.tsx", `import "@/data/catalogue";`],
+    [root + "pages/_app.tsx", `import "@/components/Nav";`],
+    [root + "pages/about.tsx", ""],
+  ]);
+  const diff = [{ filename: root + "data/catalogue.ts" }];
+  const candidates = previewCandidates(affectedRoutes(graph, diff, config), config);
+  assert.deepEqual(candidates.map((candidate) => candidate.route), ["/feature"]);
+  assert.equal(selectLinks(candidates, graph, diff, config).length, 1);
 });
 
 test("accepts only the intended Vercel project's HTTPS origin", () => {
@@ -123,4 +216,9 @@ test("AI is opt-in and uses structured Responses output with bounded input", asy
   assert.equal(request.body.store, false);
   assert.equal(request.body.text.format.strict, true);
   assert.equal(request.body.model, "chosen-model");
+  const empty = await suggestLinks(context, { OPENAI_API_KEY: "fake-test-key", OPENAI_MODEL: "chosen-model" },
+    async () => ({ ok: true, json: async () => ({ status: "completed", output: [{ content: [
+      { type: "output_text", text: '{"links":[]}' },
+    ] }] }) }));
+  assert.deepEqual(empty, [], "A supported empty answer must suppress suggestions rather than trigger static fallback");
 });
