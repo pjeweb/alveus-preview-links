@@ -9,7 +9,7 @@ import { test } from "node:test";
 const bot = fileURLToPath(new URL("../src/bot.mjs", import.meta.url));
 const prefix = "repos/alveusgg/alveusgg";
 
-test("CLI dry run, create, deduplicate, update, and stale-head checks with mocked GitHub", async () => {
+test("CLI posting, deduplication, stale heads, and safe migration to an app identity", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "preview-bot-test-"));
   try {
     const repo = path.join(directory, "repo");
@@ -30,14 +30,23 @@ test("CLI dry run, create, deduplicate, update, and stale-head checks with mocke
       const method = process.argv[process.argv.indexOf('--method') + 1];
       const prefix = ${JSON.stringify(prefix)};
       let result;
-      if (method !== 'GET') {
+      if (method === 'DELETE') {
+        state.writes.push({endpoint, method});
+        const id = Number(endpoint.split('/').pop());
+        state.comments = state.comments.filter(comment => comment.id !== id);
+      } else if (method !== 'GET') {
         const body = JSON.parse(fs.readFileSync(0, 'utf8'));
         state.writes.push({endpoint, method, body});
-        const comment = {id: 42, user: {login: 'test-user'}, body: body.body, html_url: 'https://github.com/example/comment/42'};
-        state.comments = [comment]; result = comment;
+        const id = method === 'PATCH' ? Number(endpoint.split('/').pop()) : (state.nextId ?? 42);
+        if (method === 'POST') state.nextId = id + 1;
+        const comment = {id, user: {login: state.appLogin || 'test-user'}, body: body.body, html_url: 'https://github.com/example/comment/' + id};
+        state.comments = state.comments.filter(existing => existing.id !== id).concat(comment); result = comment;
       } else {
         state.reads.push(endpoint);
-        if (endpoint === 'user') result = {login: 'test-user'};
+        if (endpoint === 'user') {
+          if (state.appLogin) throw new Error('Installation tokens cannot use /user');
+          result = {login: 'test-user'};
+        }
         else if (endpoint === prefix + '/pulls/2468') {
           state.headReads++;
           const head = state.stale && state.headReads > 1 ? 'b'.repeat(40) : state.sha;
@@ -49,12 +58,13 @@ test("CLI dry run, create, deduplicate, update, and stale-head checks with mocke
         else throw new Error('Unexpected mock endpoint: ' + endpoint);
       }
       fs.writeFileSync(process.env.GH_FIXTURE, JSON.stringify(state));
-      process.stdout.write(JSON.stringify(process.argv.includes('--slurp') ? [result] : result));
+      if (method !== 'DELETE') process.stdout.write(JSON.stringify(process.argv.includes('--slurp') ? [result] : result));
     `);
     await chmod(fake, 0o755);
-    const env = { ...process.env, PATH: `${directory}:${process.env.PATH}`, GH_FIXTURE: statePath, OPENAI_API_KEY: "", PR_AUTHOR: "" };
-    const run = (extra = []) => execFileSync(process.execPath, [bot, "--pr", "2468", "--repo-dir", repo, "--no-ai", ...extra],
-      { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const env = { ...process.env, PATH: `${directory}:${process.env.PATH}`, GH_FIXTURE: statePath, OPENAI_API_KEY: "", PR_AUTHOR: "",
+      PREVIEW_BOT_LOGIN: "", PREVIEW_LEGACY_LOGIN: "" };
+    const run = (extra = [], overrides = {}) => execFileSync(process.execPath, [bot, "--pr", "2468", "--repo-dir", repo, "--no-ai", ...extra],
+      { env: { ...env, ...overrides }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     const read = async () => JSON.parse(await readFile(statePath, "utf8"));
     assert.match(run(), /dry run/);
     assert.equal((await read()).writes.length, 0);
@@ -77,5 +87,32 @@ test("CLI dry run, create, deduplicate, update, and stale-head checks with mocke
     await writeFile(statePath, JSON.stringify(state));
     run(["--write", "--force"]);
     assert.equal((await read()).writes.length, 2, "A superseded PR head must not post");
+
+    // Moving to an app needs a new author, not an edit of the personal comment.
+    state = await read();
+    state.stale = false; state.headReads = 0; state.reads = [];
+    state.appLogin = "preview-example[bot]";
+    state.comments.push({ id: 99, user: { login: "unrelated-user" }, body: "<!-- alveus-preview-links -->\nKeep this" });
+    state.comments.push({ id: 100, user: { login: "test-user" }, body: "Ordinary discussion: keep this" });
+    await writeFile(statePath, JSON.stringify(state));
+    const appEnv = { PREVIEW_BOT_LOGIN: state.appLogin, PREVIEW_LEGACY_LOGIN: "test-user" };
+    run(["--write"], appEnv);
+    state = await read();
+    assert.ok(!state.reads.includes("user"), "App authentication must not call /user");
+    assert.equal(state.writes[2].method, "POST");
+    assert.equal(state.writes[3].method, "DELETE");
+    assert.equal(state.writes[3].endpoint, `${prefix}/issues/comments/42`);
+    assert.deepEqual(state.comments.map(comment => comment.id).sort((a, b) => a - b), [43, 99, 100]);
+    assert.equal(state.comments.find(comment => comment.id === 43).user.login, state.appLogin);
+
+    // If a cleanup attempt failed after posting, the next run retries cleanup
+    // without creating another app comment or deleting ordinary discussion.
+    state.comments.push({ id: 101, user: { login: "test-user" }, body: "<!-- alveus-preview-links -->\nOld automation" });
+    await writeFile(statePath, JSON.stringify(state));
+    run(["--write"], appEnv);
+    state = await read();
+    assert.equal(state.writes.length, 5);
+    assert.equal(state.writes[4].method, "DELETE");
+    assert.deepEqual(state.comments.map(comment => comment.id).sort((a, b) => a - b), [43, 99, 100]);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

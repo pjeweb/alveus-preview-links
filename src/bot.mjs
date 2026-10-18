@@ -20,7 +20,8 @@ function gh(endpoint, { method = "GET", body, paginate = false } = {}) {
   const args = ["api", endpoint, "--method", method];
   if (paginate) args.push("--paginate", "--slurp");
   if (body) args.push("--input", "-");
-  const result = JSON.parse(run("gh", args, body ? { input: JSON.stringify(body) } : {}));
+  const output = run("gh", args, body ? { input: JSON.stringify(body) } : {});
+  const result = output.trim() ? JSON.parse(output) : null;
   return paginate ? result.flat() : result;
 }
 
@@ -64,6 +65,15 @@ export function findOwnedComment(comments, login) {
   return comments.find((comment) => comment.user.login === login && comment.body.startsWith(marker));
 }
 
+function removeLegacyComments(repository, comments, login, legacyLogin) {
+  if (!legacyLogin || !login?.endsWith("[bot]")) return;
+  for (const comment of comments) {
+    if (comment.user.login !== legacyLogin || !comment.body.startsWith(marker)) continue;
+    gh(`repos/${repository}/issues/comments/${comment.id}`, { method: "DELETE" });
+    console.error(`Removed superseded personal automation comment ${comment.html_url ?? comment.id}`);
+  }
+}
+
 async function latestDeployment(config, sha) {
   const deployments = gh(`repos/${config.repository}/deployments?sha=${sha}&per_page=100`, { paginate: true });
   for (const deployment of deployments) {
@@ -103,7 +113,13 @@ export async function main() {
   if (process.env.PR_AUTHOR !== undefined) config.author = process.env.PR_AUTHOR;
   validateConfig(config);
   if (values.pr && !/^[1-9]\d*$/.test(values.pr)) throw new Error("--pr must be a positive integer");
-  const login = values.write ? gh("user").login : null;
+  const botLogin = process.env.PREVIEW_BOT_LOGIN;
+  const legacyLogin = process.env.PREVIEW_LEGACY_LOGIN;
+  if (botLogin && !/^[a-z\d-]+\[bot\]$/i.test(botLogin)) throw new Error("Invalid PREVIEW_BOT_LOGIN");
+  if (legacyLogin && !/^[a-z\d-]+$/i.test(legacyLogin)) throw new Error("Invalid PREVIEW_LEGACY_LOGIN");
+  // Installation tokens have no /user identity. The pinned token action supplies
+  // its authenticated app slug, from which the workflow derives the bot login.
+  const login = values.write ? botLogin || gh("user").login : null;
   const fingerprint = createHash("sha256").update(JSON.stringify(config))
     .update(String(!values["no-ai"] && Boolean(process.env.OPENAI_API_KEY)))
     .update(values["no-ai"] ? "no-ai" : process.env.OPENAI_MODEL ?? "no-model")
@@ -124,7 +140,10 @@ export async function main() {
       const state = `<!-- state:${pr.head.sha}:${deployment.id}:${fingerprint} -->`;
       const comments = values.write ? gh(`repos/${config.repository}/issues/${pr.number}/comments?per_page=100`, { paginate: true }) : [];
       const existing = findOwnedComment(comments, login);
-      if (!values.force && existing?.body.includes(state)) { console.error(`#${pr.number}: already current`); continue; }
+      if (!values.force && existing?.body.includes(state)) {
+        removeLegacyComments(config.repository, comments, login, legacyLogin);
+        console.error(`#${pr.number}: already current`); continue;
+      }
       const changes = gh(`repos/${config.repository}/pulls/${pr.number}/files?per_page=100`, { paginate: true });
       if (!changes.some((change) => [change.filename, change.previous_filename]
         .some((file) => file?.startsWith(config.sourceRoot)))) {
@@ -170,7 +189,11 @@ export async function main() {
       }
       const result = existing ? gh(`repos/${config.repository}/issues/comments/${existing.id}`, { method: "PATCH", body: { body } })
         : gh(`repos/${config.repository}/issues/${pr.number}/comments`, { method: "POST", body: { body } });
+      if (result.user?.login !== login) throw new Error("Comment author differs from the configured identity; legacy comments were preserved");
       console.error(`#${pr.number}: ${existing ? "updated" : "created"} ${result.html_url}`);
+      // Old marked personal comments are removed only after the app has posted
+      // successfully. Retrying an unchanged bot comment also retries cleanup.
+      removeLegacyComments(config.repository, comments, login, legacyLogin);
     } catch (error) {
       // execFile errors include arguments but no token, since authentication is via gh's environment.
       console.error(`#${pr.number}: ${error.message}`); failed = true;

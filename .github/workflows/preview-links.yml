@@ -12,6 +12,10 @@ on:
         description: 'Post or update comments'
         type: boolean
         default: false
+      use_app:
+        description: 'Test GitHub App authentication before enabling it for scheduled runs'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,6 +29,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || vars.PREVIEW_COMMENTS_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      USE_APP: ${{ vars.PREVIEW_APP_ENABLED == 'true' || inputs.use_app == true }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,22 +39,51 @@ jobs:
         with:
           node-version: '24'
       - run: node --test
+      - name: Validate app configuration
+        if: env.USE_APP == 'true'
+        env:
+          APP_CLIENT_ID: ${{ vars.PREVIEW_APP_CLIENT_ID }}
+          HAS_APP_KEY: ${{ secrets.PREVIEW_APP_PRIVATE_KEY != '' }}
+        run: |
+          if [[ -z "$APP_CLIENT_ID" || "$HAS_APP_KEY" != 'true' ]]; then
+            echo 'Set PREVIEW_APP_CLIENT_ID and PREVIEW_APP_PRIVATE_KEY before enabling app authentication.' >&2
+            exit 1
+          fi
+      - name: Create GitHub App installation token
+        id: app-token
+        if: env.USE_APP == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.PREVIEW_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PREVIEW_APP_PRIVATE_KEY }}
+          owner: alveusgg
+          repositories: alveusgg
+          permission-contents: read
+          permission-deployments: read
+          permission-pull-requests: write
       - name: Find preview links
         env:
           # Public reads also work with the workflow token. Cross-repo comment
-          # writes need your own personal access token.
-          GH_TOKEN: ${{ secrets.PREVIEW_GITHUB_TOKEN || github.token }}
+          # writes use the app installation token, or the existing personal token.
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.PREVIEW_GITHUB_TOKEN || github.token }}
+          PREVIEW_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug && format('{0}[bot]', steps.app-token.outputs.app-slug) || '' }}
+          PREVIEW_LEGACY_LOGIN: ${{ steps.app-token.outputs.token && github.repository_owner || '' }}
+          HAS_APP_TOKEN: ${{ steps.app-token.outputs.token != '' }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
           PR_NUMBER: ${{ inputs.pr }}
-          HAS_COMMENT_TOKEN: ${{ secrets.PREVIEW_GITHUB_TOKEN != '' }}
+          HAS_COMMENT_TOKEN: ${{ steps.app-token.outputs.token != '' || secrets.PREVIEW_GITHUB_TOKEN != '' }}
           WRITE: ${{ github.event_name == 'schedule' && vars.PREVIEW_COMMENTS_ENABLED == 'true' || inputs.write == true }}
         shell: bash
         run: |
           args=()
+          if [[ "$USE_APP" == 'true' && ( "$HAS_APP_TOKEN" != 'true' || -z "$PREVIEW_BOT_LOGIN" ) ]]; then
+            echo 'App authentication did not provide a token and bot identity.' >&2
+            exit 1
+          fi
           if [[ "$WRITE" == 'true' && "$HAS_COMMENT_TOKEN" != 'true' ]]; then
-            echo 'Set PREVIEW_GITHUB_TOKEN before enabling comments.' >&2
+            echo 'Configure GitHub App authentication or PREVIEW_GITHUB_TOKEN before enabling comments.' >&2
             exit 1
           fi
           if [[ -n "$PR_NUMBER" ]]; then args+=(--pr "$PR_NUMBER"); fi

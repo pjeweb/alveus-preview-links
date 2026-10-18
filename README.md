@@ -71,8 +71,8 @@ bot's repository; configuration from PR branches is never loaded.
    `alveusgg/alveusgg`, with **Pull requests: read and write**, **Deployments:
    read**, and **Contents: read**. Organization approval or SSO authorization may
    be required by the organization's policy. The token acts as your account, so
-   comments appear under your name. This implementation expects a user token,
-   not a GitHub App installation token.
+   comments appear under your name. For a separate bot identity, use the
+   GitHub App setup below instead.
 3. Save that token as the bot repository's Actions secret
    `PREVIEW_GITHUB_TOKEN`. A personal repo's built-in `GITHUB_TOKEN` can read the
    public Alveus data but cannot write comments in a different repository.
@@ -94,6 +94,45 @@ delivery. Public-repo schedules also disable after 60 days without repository
 activity. For a continuously unattended service, run the same script on an
 existing machine's timer, or use a GitHub App subscribed to `deployment_status`
 for immediate delivery (an App requires installation in the Alveus repo).
+
+## GitHub App identity
+
+The workflow supports a private app owned by the `alveusgg` organization while
+continuing to run in this public personal repository. Webhooks are disabled for
+the scheduled version, so no additional server is needed.
+
+1. Open [New GitHub App under Alveus](https://github.com/organizations/alveusgg/settings/apps/new).
+   Name it **Alveus Preview Links**, or choose another available name. Set the
+   homepage to this repository. Leave OAuth authorization, callback URLs, device
+   flow, and setup URL unconfigured. Turn **Webhooks → Active** off.
+2. Give it repository permissions **Pull requests: Read & write**,
+   **Deployments: Read-only**, and **Contents: Read-only**. Metadata is included
+   automatically. Choose **Only on this account** and create the app.
+3. On its settings page, copy the **Client ID** into this repository's Actions
+   variable `PREVIEW_APP_CLIENT_ID`. Under **Private keys**, generate a key and
+   save the entire downloaded PEM file as Actions secret
+   `PREVIEW_APP_PRIVATE_KEY`, including its BEGIN and END lines.
+4. In the app settings sidebar, choose **Install App**, install it on `alveusgg`,
+   choose **Only select repositories**, and select `alveusgg/alveusgg`.
+5. Test **Preview links → Run workflow** against one open PR, selecting both
+   `write` and `use_app`. The pinned GitHub-owned token action creates an
+   installation token restricted to that repository and derives the bot login
+   from the authenticated app slug. The app writes as `app-slug[bot]`.
+6. After a successful test, set Actions variable `PREVIEW_APP_ENABLED=true`.
+   Scheduled runs now use the app. After verifying the full migration, remove
+   `PREVIEW_GITHUB_TOKEN` and revoke the old personal token.
+
+If app authentication is selected but its credentials are missing or invalid,
+the run fails instead of silently posting with the personal token. Until app
+authentication is selected, the existing personal-token setup keeps working.
+An app's own comments are updated in place. On successful app posting, the
+workflow removes this personal repository owner's old comments carrying this
+bot's exact marker. Other accounts' comments and ordinary discussion are left
+alone. Failed legacy cleanup is retried even when the bot's links are current.
+For local installation-token runs, set `GH_TOKEN`, `PREVIEW_BOT_LOGIN` (for
+example `alveus-preview-links[bot]`), and optionally `PREVIEW_LEGACY_LOGIN` for
+the old personal author. Without `PREVIEW_BOT_LOGIN`, local writes authenticate
+as the current user via `gh api user`.
 
 ## Optional AI suggestions
 
