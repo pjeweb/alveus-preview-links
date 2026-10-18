@@ -183,13 +183,14 @@ export function renderComment({ marker, sha, origin, links, candidates, ai, trun
   const represented = new Set(links.map((link) => link.path));
   const omitted = candidates.filter((candidate) => !represented.has(candidate.route) &&
     !links.some((link) => link.route === candidate.route));
-  return [marker, "### Pages to preview", "",
+  return [marker, "### 🤖 Automated preview links", "",
+    "Generated automatically by [Alveus Preview Links](https://github.com/pjeweb/alveus-preview-links) after a successful Vercel deployment.", "",
     `Preview for commit \`${sha.slice(0, 7)}\` · [Deployment](${origin})`, "",
     ...links.map((link) => `- [${plain(link.label)}](${linkUrl(origin, link)}) — ${plain(link.reason)}${link.path.startsWith("/admin") ? " (requires admin access)" : ""}`),
     "", omitted.length ? `Showing a sample from ${candidates.length} potentially affected page routes; ${omitted.length} others are omitted or need real record IDs.` : "",
     truncated ? "The changed-file list was truncated by GitHub; additional pages may be affected." : "",
     links.some((link) => link.path === "/stream/overlay") ? "Overlay previews work best at 1920×1080." : "", "",
     `${ai ? "AI-assisted suggestions" : "Suggestions from static imports and source-checked preview rules"}; runtime, data-driven, and external-package dependencies may affect additional pages.`,
-    "This comment is updated for subsequent successful deployments.",
+    "This automated comment is updated in place for subsequent successful deployments.",
   ].join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }

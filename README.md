@@ -13,6 +13,10 @@ imports, barrel exports, dynamic imports with literal paths, and imported assets
 Shared app changes produce a sample from different site areas. Deleted pages,
 API routes, authentication endpoints, and unresolved dynamic URLs are omitted.
 
+Comments are visibly headed **🤖 Automated preview links** and attributed to this
+automation. With a personal access token, GitHub still displays the token owner's
+username; a separate bot identity requires a GitHub App or a dedicated account.
+
 One marked comment per PR is updated on later deployments. An unchanged
 deployment is skipped before downloading source or calling an AI model. The
 comment records the deployment, head SHA, and bot/config fingerprint; changing
