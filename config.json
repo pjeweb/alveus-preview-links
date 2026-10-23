@@ -5,6 +5,7 @@
   "pagesRoot": "apps/website/src/pages/",
   "deploymentCreator": "vercel[bot]",
   "deploymentHostPrefix": "alveusgg-website-",
+  "deploymentIgnoredPaths": ["apps/website/__tests__/"],
   "maxLinks": 6,
   "dynamicExamples": {}
 }

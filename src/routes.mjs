@@ -279,12 +279,13 @@ function plain(value) {
   return String(value).replace(/[\r\n]+/g, " ").replace(/[@<>&\[\]()*_`|\\]/g, "").slice(0, 240);
 }
 
-export function renderComment({ marker, sha, origin, links, candidates, ai, truncated, title }) {
+export function renderComment({ marker, sha, deploymentSha = sha, origin, links, candidates, ai, truncated, title }) {
   const represented = new Set(links.map((link) => link.path));
   const omitted = candidates.filter((candidate) => !represented.has(candidate.route) &&
     !links.some((link) => link.route === candidate.route));
   return [marker, `### 🤖 Automated preview links${title ? `: ${plain(title)}` : ""}`, "",
     `Preview for commit \`${sha.slice(0, 7)}\` · [Deployment](${origin})`, "",
+    deploymentSha !== sha ? `Deployment built from \`${deploymentSha.slice(0, 7)}\`; application files match this PR head.\n` : "",
     ...links.map((link) => `- [${plain(link.label)}](${linkUrl(origin, link)}) — ${plain(link.reason)}${link.path.startsWith("/admin") ? " (requires admin access)" : ""}`),
     "", omitted.length ? `Showing ${candidates.length - omitted.length} of ${candidates.length} candidate page routes; others are omitted or need real record IDs.` : "",
     truncated ? "The changed-file list was truncated by GitHub; additional pages may be affected." : "",

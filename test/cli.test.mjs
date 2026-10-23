@@ -51,8 +51,16 @@ test("CLI posting, deduplication, stale heads, and safe migration to an app iden
           state.headReads++;
           const head = state.stale && state.headReads > 1 ? 'b'.repeat(40) : state.sha;
           result = {number: 2468, state: 'open', title: 'About page', user: {login:'someone-else'}, head: {sha:head}};
-        } else if (endpoint.includes('/deployments?')) result = [{id:state.deployment, creator:{login:'vercel[bot]'}, production_environment:false, environment:'Preview'}];
-        else if (endpoint.includes('/statuses?')) result = [{state:'success', environment_url:'https://alveusgg-website-example-alveus.vercel.app'}];
+        } else if (endpoint.includes('/deployments?')) {
+          result = state.deploymentSha && endpoint.includes('sha=' + state.sha) ? []
+            : [{id:state.deployment, sha:state.deploymentSha || state.sha, creator:{login:'vercel[bot]'}, production_environment:false, environment:'Preview'}];
+        } else if (endpoint.includes('/statuses?')) {
+          state.statusReads = (state.statusReads || 0) + 1;
+          result = [{state:'success', environment_url:state.raceOrigin && state.statusReads > 1
+            ? state.raceOrigin : state.origin || 'https://alveusgg-website-example-alveus.vercel.app'}];
+        } else if (endpoint.includes('/git/commits/')) result = {sha:state.sha, parents:[{sha:state.deploymentSha}]};
+        else if (endpoint.includes('/compare/')) result = {status:'ahead', base_commit:{sha:state.deploymentSha, parents:[]},
+          merge_base_commit:{sha:state.deploymentSha}, files:[{filename:'apps/website/__tests__/about.test.ts'}]};
         else if (endpoint.includes('/comments?')) result = state.comments;
         else if (endpoint.endsWith('/files?per_page=100')) result = state.changes || [{filename:'apps/website/src/pages/about.tsx', patch:'+ changed'}];
         else throw new Error('Unexpected mock endpoint: ' + endpoint);
@@ -131,5 +139,37 @@ test("CLI posting, deduplication, stale heads, and safe migration to an app iden
     assert.equal(state.writes[5].method, "DELETE");
     assert.equal(state.writes[5].endpoint, `${prefix}/issues/comments/43`);
     assert.deepEqual(state.comments.map(comment => comment.id).sort((a, b) => a - b), [99, 100, 102]);
+
+    // Vercel can reuse a GitHub deployment ID when a redeploy changes its URL.
+    state.changes = [{ filename: "apps/website/src/pages/about.tsx" }];
+    await writeFile(statePath, JSON.stringify(state));
+    run(["--write"], appEnv);
+    state = await read();
+    const writesBeforeRedeploy = state.writes.length;
+    state.origin = "https://alveusgg-website-redeployed-alveus.vercel.app";
+    await writeFile(statePath, JSON.stringify(state));
+    run(["--write"], appEnv);
+    state = await read();
+    assert.equal(state.writes.length, writesBeforeRedeploy + 1, "A new URL on the same deployment ID must refresh the comment");
+    assert.equal(state.writes.at(-1).method, "PATCH");
+    assert.ok(state.writes.at(-1).body.body.includes(state.origin));
+
+    // Reusing an ancestor must identify the actual deployed commit and dedupe.
+    state.deploymentSha = "c".repeat(40);
+    await writeFile(statePath, JSON.stringify(state));
+    run(["--write"], appEnv);
+    state = await read();
+    assert.equal(state.writes.length, writesBeforeRedeploy + 2);
+    assert.match(state.writes.at(-1).body.body, /Deployment built from `ccccccc`/);
+    run(["--write"], appEnv);
+    assert.equal((await read()).writes.length, state.writes.length, "Equivalent previews must dedupe like exact-head previews");
+
+    // A redeploy during analysis invalidates the selected preview, even when
+    // the head and GitHub deployment ID have not changed.
+    state.raceOrigin = "https://alveusgg-website-newer-alveus.vercel.app";
+    state.statusReads = 0;
+    await writeFile(statePath, JSON.stringify(state));
+    run(["--write", "--force"], appEnv);
+    assert.equal((await read()).writes.length, state.writes.length, "A superseded deployment URL must not post");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

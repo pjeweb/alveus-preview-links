@@ -8,7 +8,7 @@ A standalone personal GitHub automation that adds useful Vercel preview links to
 all open PRs in `alveusgg/alveusgg`. No changes to the Alveus repository, Vercel
 account, database, or deployment process are needed.
 
-It reads GitHub's Vercel deployment statuses, waits for a successful preview of
+It reads GitHub's Vercel deployment statuses, finds a successful preview matching
 the PR's **current head commit**, traces changed UI files through static runtime
 imports to Next.js pages, and selects at most six links. It follows relative and
 `@/` imports, barrel exports, dynamic imports with literal paths, and assets.
@@ -37,6 +37,23 @@ comment records the deployment, head SHA, and bot/config fingerprint; changing
 the bot or model also refreshes suggestions. Only comments belonging to the
 authenticated account are edited. Keep one automation instance per account and
 repository; the included workflow serializes runs to avoid duplicate comments.
+
+An exact-head preview takes priority. If Vercel canceled or ignored a follow-up,
+the bot can reuse a successful ancestor after verifying that the complete GitHub
+comparison contains only excluded files or no file changes. `deploymentIgnoredPaths`
+in this bot's trusted config lists directory prefixes excluded from this check;
+by default only `apps/website/__tests__/` is excluded. Application source,
+dependencies, database files, and build configuration must match. The search
+stops at the first other change, a potentially truncated comparison, or twenty
+first-parent ancestors. It works across fork PRs without a PR-specific override.
+
+The comment identifies the actual deployed commit when reusing a preview. The
+deployment's latest status must be successful; its URL is used instead of the
+branch alias from Vercel's comment or an ignored build's commit status. A
+redeploy that reuses a GitHub deployment ID but changes its URL refreshes the
+comment, and the head, deployed commit, and URL are checked again before posting.
+For example, PR #2250's successful `7077a19` preview can serve head `201b92d`:
+only a test-file change and an empty commit separate them.
 
 ## Example: PR #2468
 
@@ -103,7 +120,7 @@ bot's repository; configuration from PR branches is never loaded.
    post that example.
 5. Set the bot repository's Actions variable `PREVIEW_COMMENTS_ENABLED=true` to
    enable scheduled comments for **all existing and future open PRs**. It checks
-   every ten minutes and updates only successful current previews. Until this
+   every ten minutes and updates only successful matching previews. Until this
    variable is enabled, scheduled jobs are skipped. Remove or disable the
    variable to stop scheduled runs.
 

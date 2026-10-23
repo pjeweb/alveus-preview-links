@@ -5,8 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { affectedRoutes, deploymentOrigin, linkUrl, overlayLinks, previewCandidates, renderComment, selectLinks } from "./routes.mjs";
+import { affectedRoutes, linkUrl, overlayLinks, previewCandidates, renderComment, selectLinks } from "./routes.mjs";
 import { suggestLinks } from "./ai.mjs";
+import { deploymentKey, latestDeployment } from "./deployments.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const marker = "<!-- alveus-preview-links -->";
@@ -74,26 +75,11 @@ function removeLegacyComments(repository, comments, login, legacyLogin) {
   }
 }
 
-async function latestDeployment(config, sha) {
-  const deployments = gh(`repos/${config.repository}/deployments?sha=${sha}&per_page=100`, { paginate: true });
-  for (const deployment of deployments) {
-    if (deployment.creator?.login !== config.deploymentCreator || deployment.production_environment ||
-        !/^preview(?:\b|$)/i.test(deployment.environment)) continue;
-    const statuses = gh(`repos/${config.repository}/deployments/${deployment.id}/statuses?per_page=1`);
-    const status = statuses[0];
-    if (status?.state !== "success" || !status.environment_url) continue;
-    try {
-      const origin = deploymentOrigin(status.environment_url, config.deploymentHostPrefix);
-      return { id: deployment.id, origin };
-    } catch { /* A different Vercel project in the same repository. */ }
-  }
-  return null;
-}
-
 async function stillCurrent(config, pr, deployment) {
   const current = gh(`repos/${config.repository}/pulls/${pr.number}`);
   if (current.state !== "open" || current.head.sha !== pr.head.sha) return false;
-  return (await latestDeployment(config, current.head.sha))?.id === deployment.id;
+  const latest = await latestDeployment(config, current.head.sha, gh);
+  return latest !== null && deploymentKey(latest) === deploymentKey(deployment);
 }
 
 async function removeUnneededComment(config, pr, deployment, existing) {
@@ -114,6 +100,9 @@ function validateConfig(config) {
   }
   if (!config.pagesRoot.startsWith(config.sourceRoot)) throw new Error("pagesRoot must be within sourceRoot");
   if (!config.dynamicExamples || typeof config.dynamicExamples !== "object") throw new Error("Invalid dynamicExamples");
+  if (!Array.isArray(config.deploymentIgnoredPaths ?? []) || (config.deploymentIgnoredPaths ?? []).some((prefix) =>
+    typeof prefix !== "string" || !/^(?:[\w.-]+\/)+$/.test(prefix) || prefix.split("/").some((part) => part === "." || part === "..") ||
+    prefix.startsWith(config.sourceRoot) || config.sourceRoot.startsWith(prefix))) throw new Error("Invalid deploymentIgnoredPaths");
 }
 
 export async function main() {
@@ -142,6 +131,7 @@ export async function main() {
     .update(await readFile(fileURLToPath(import.meta.url)))
     .update(await readFile(new URL("./routes.mjs", import.meta.url)))
     .update(await readFile(new URL("./trpc.mjs", import.meta.url)))
+    .update(await readFile(new URL("./deployments.mjs", import.meta.url)))
     .update(await readFile(new URL("../package.json", import.meta.url)))
     .update(await readFile(new URL("./ai.mjs", import.meta.url)))
     .digest("hex").slice(0, 16);
@@ -152,9 +142,10 @@ export async function main() {
   for (const pr of selected) {
     let checkout;
     try {
-      const deployment = await latestDeployment(config, pr.head.sha);
-      if (!deployment) { console.error(`#${pr.number}: waiting for a successful preview of the current head`); continue; }
-      const state = `<!-- state:${pr.head.sha}:${deployment.id}:${fingerprint} -->`;
+      const deployment = await latestDeployment(config, pr.head.sha, gh);
+      if (!deployment) { console.error(`#${pr.number}: waiting for a successful preview matching the current head`); continue; }
+      if (deployment.sha !== pr.head.sha) console.error(`#${pr.number}: reusing preview built from ${deployment.sha.slice(0, 7)}; application files match`);
+      const state = `<!-- state:${pr.head.sha}:${deploymentKey(deployment)}:${fingerprint} -->`;
       const comments = values.write ? gh(`repos/${config.repository}/issues/${pr.number}/comments?per_page=100`, { paginate: true }) : [];
       const existing = findOwnedComment(comments, login);
       if (!values.force && existing?.body.includes(state)) {
@@ -199,7 +190,7 @@ export async function main() {
         if (values.write) await removeUnneededComment(config, pr, deployment, existing);
         console.error(`#${pr.number}: no concrete affected page links found`); continue;
       }
-      const body = renderComment({ marker: `${marker}\n${state}`, sha: pr.head.sha, origin: deployment.origin,
+      const body = renderComment({ marker: `${marker}\n${state}`, sha: pr.head.sha, deploymentSha: deployment.sha, origin: deployment.origin,
         links, candidates, ai, title: pr.title, truncated: changes.length >= 3000 || changes.length < pr.changed_files });
       if (!values.write) { console.log(`# PR ${pr.number} — dry run\n\n${body}`); continue; }
       // Avoid posting links for a superseded head or deployment after slow analysis.
